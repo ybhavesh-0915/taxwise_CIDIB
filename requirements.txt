@@ -1,4 +1,8 @@
-streamlit
 google-generativeai
 python-dotenv
+fastapi
+uvicorn
+requests
+matplotlib
+numpy
 typing-extensions
