@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 import requests
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, List
 import uvicorn
 from datetime import datetime, timedelta
@@ -21,7 +22,17 @@ app = FastAPI(
     version="1.0.0",
     description="API for analyzing CIBIL scores based on transaction data"
 )
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
+# In-memory storage (use Redis/Database in production)
+sessions_data: Dict[str, Any] = {}
 # Official CIBIL weightages for India (2025)
 CIBIL_FACTORS = {
     'payment_history': 0.35,      # 35% - Most critical
@@ -563,3 +574,4 @@ if __name__ == "__main__":
     print(f"Starting CIBIL Analysis Service on port {PORT}")
     print(f"Data Processor URL: {DATA_PROCESSOR_BASE_URL}")
     uvicorn.run(app, host="0.0.0.0", port=PORT)
+
