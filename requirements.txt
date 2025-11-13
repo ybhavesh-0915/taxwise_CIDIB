@@ -6,3 +6,4 @@ requests
 matplotlib
 numpy
 typing-extensions
+python-multipart
