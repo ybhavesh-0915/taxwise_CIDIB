@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 import requests
 from typing import Dict, Any, List
 import uvicorn
@@ -15,7 +16,11 @@ from collections import defaultdict
 DATA_PROCESSOR_BASE_URL = os.getenv("DATA_PROCESSOR_URL", "http://localhost:8000")
 PORT = int(os.getenv("PORT", 8001))
 
-app = FastAPI(title="CIBIL Analysis Service", version="1.0.0")
+app = FastAPI(
+    title="CIBIL Analysis Service",
+    version="1.0.0",
+    description="API for analyzing CIBIL scores based on transaction data"
+)
 
 # Official CIBIL weightages for India (2025)
 CIBIL_FACTORS = {
@@ -110,32 +115,28 @@ def calculate_cibil_score(transactions: List[Dict]) -> Dict[str, Any]:
     total_expected_payments = len(all_credit_transactions)
     
     if total_expected_payments == 0:
-        payment_history_score = 50.0  # No credit history
+        payment_history_score = 50.0
         payment_remarks = "No credit payment history found"
     else:
-        # Assume all recorded payments were made (no defaults in data)
-        # Check for payment regularity
         months_covered = date_range_months
         payments_per_month = total_expected_payments / max(1, months_covered)
         
-        if payments_per_month >= 1.5:  # More than 1.5 payments per month
+        if payments_per_month >= 1.5:
             payment_consistency = 95.0
-        elif payments_per_month >= 1.0:  # At least 1 payment per month
+        elif payments_per_month >= 1.0:
             payment_consistency = 90.0
-        elif payments_per_month >= 0.5:  # Payment every 2 months
+        elif payments_per_month >= 0.5:
             payment_consistency = 75.0
         else:
             payment_consistency = 60.0
         
-        # Check for payment gaps (assuming monthly payments expected)
         payment_dates = sorted([t['parsed_date'] for t in all_credit_transactions])
         gaps = []
         for i in range(1, len(payment_dates)):
             gap_days = (payment_dates[i] - payment_dates[i-1]).days
-            if gap_days > 45:  # More than 45 days gap
+            if gap_days > 45:
                 gaps.append(gap_days)
         
-        # Penalize for large gaps
         gap_penalty = min(20, len(gaps) * 5)
         payment_history_score = max(50, payment_consistency - gap_penalty)
         
@@ -148,18 +149,12 @@ def calculate_cibil_score(transactions: List[Dict]) -> Dict[str, Any]:
         total_cc_payments = sum(abs(t['amount']) for t in cc_payments)
         num_cc_payments = len(cc_payments)
         
-        # Estimate credit limit based on payment patterns
-        # Assumption: Monthly payment is 3-5% of total outstanding
         avg_payment = total_cc_payments / num_cc_payments
-        estimated_monthly_bill = avg_payment * 30  # Assuming 3% payment
-        
-        # Credit limit is typically 2-3x of monthly usage
+        estimated_monthly_bill = avg_payment * 30
         estimated_credit_limit = estimated_monthly_bill * 2.5
         
-        # Calculate utilization ratio
         cur = min(1.0, estimated_monthly_bill / estimated_credit_limit)
         
-        # Score based on CUR (ideal < 30%)
         if cur <= 0.30:
             credit_utilization_score = 95.0
             cur_status = "Excellent"
@@ -175,7 +170,7 @@ def calculate_cibil_score(transactions: List[Dict]) -> Dict[str, Any]:
         
         cur_percentage = int(cur * 100)
     else:
-        credit_utilization_score = 70.0  # No CC usage, not ideal but not bad
+        credit_utilization_score = 70.0
         cur_percentage = 0
         cur_status = "No Credit Card Usage"
     
@@ -222,7 +217,6 @@ def calculate_cibil_score(transactions: List[Dict]) -> Dict[str, Any]:
     
     num_credit_types = len(credit_types_present)
     
-    # Score based on variety
     if num_credit_types >= 5:
         credit_mix_score = 95.0
         mix_status = "Excellent Mix"
@@ -242,14 +236,12 @@ def calculate_cibil_score(transactions: List[Dict]) -> Dict[str, Any]:
     # ============================================
     # 5. NEW CREDIT INQUIRIES (10%)
     # ============================================
-    # Estimate new credit inquiries based on first appearance of loan types
     first_appearance_dates = {}
     for txn in dated_transactions:
         cat = txn['category']
         if cat not in first_appearance_dates:
             first_appearance_dates[cat] = txn['parsed_date']
     
-    # Count inquiries in last 6 months
     recent_threshold = end_date - timedelta(days=180)
     recent_inquiries = sum(1 for date in first_appearance_dates.values() if date >= recent_threshold)
     
@@ -277,11 +269,8 @@ def calculate_cibil_score(transactions: List[Dict]) -> Dict[str, Any]:
         new_credit_score * CIBIL_FACTORS['new_credit']
     )
     
-    # Map to 300-900 range
     final_cibil_score = int(300 + (raw_score / 100.0) * 600)
     
-    # CIBIL score threshold tracking
-    # Maximum achievable based on component scores
     max_possible_raw = (
         95.0 * CIBIL_FACTORS['payment_history'] +
         95.0 * CIBIL_FACTORS['credit_utilization'] +
@@ -291,10 +280,8 @@ def calculate_cibil_score(transactions: List[Dict]) -> Dict[str, Any]:
     )
     max_achievable_score = int(300 + (max_possible_raw / 100.0) * 600)
     
-    # Calculate percentage of maximum achieved
     score_percentage = (raw_score / max_possible_raw) * 100
     
-    # Determine status with peak detection
     is_peak = False
     peak_message = None
     
@@ -323,7 +310,6 @@ def calculate_cibil_score(transactions: List[Dict]) -> Dict[str, Any]:
         status = "Poor"
         loan_approval = "Very Low"
     
-    # Generate recommendations
     recommendations = []
     if payment_history_score < 80:
         recommendations.append("Maintain consistent monthly payments without delays")
@@ -397,9 +383,131 @@ def calculate_cibil_score(transactions: List[Dict]) -> Dict[str, Any]:
         "recommendations": recommendations
     }
 
+# ============================================
+# API ENDPOINTS
+# ============================================
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Root endpoint with API documentation"""
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>CIBIL Analysis Service</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 800px;
+                margin: 50px auto;
+                padding: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+            .container {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 30px;
+                border-radius: 15px;
+                backdrop-filter: blur(10px);
+            }
+            h1 {
+                text-align: center;
+                margin-bottom: 10px;
+            }
+            .subtitle {
+                text-align: center;
+                opacity: 0.9;
+                margin-bottom: 30px;
+            }
+            .endpoint {
+                background: rgba(255, 255, 255, 0.15);
+                padding: 15px;
+                margin: 15px 0;
+                border-radius: 8px;
+                border-left: 4px solid #4CAF50;
+            }
+            .method {
+                display: inline-block;
+                background: #4CAF50;
+                color: white;
+                padding: 4px 10px;
+                border-radius: 4px;
+                font-weight: bold;
+                margin-right: 10px;
+            }
+            code {
+                background: rgba(0, 0, 0, 0.3);
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-family: 'Courier New', monospace;
+            }
+            .example {
+                background: rgba(0, 0, 0, 0.2);
+                padding: 10px;
+                border-radius: 5px;
+                margin-top: 10px;
+            }
+            a {
+                color: #FFD700;
+                text-decoration: none;
+            }
+            a:hover {
+                text-decoration: underline;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🏦 CIBIL Analysis Service</h1>
+            <p class="subtitle">API for analyzing CIBIL scores based on transaction data</p>
+            
+            <div class="endpoint">
+                <span class="method">GET</span>
+                <code>/health</code>
+                <p>Check service health status</p>
+                <div class="example">
+                    <strong>Example:</strong> <a href="/health" target="_blank">http://localhost:8001/health</a>
+                </div>
+            </div>
+            
+            <div class="endpoint">
+                <span class="method">GET</span>
+                <code>/analyze-cibil/{session_id}</code>
+                <p>Analyze CIBIL score for a given session ID</p>
+                <div class="example">
+                    <strong>Example:</strong> <code>http://localhost:8001/analyze-cibil/abc123</code>
+                </div>
+            </div>
+            
+            <div class="endpoint">
+                <span class="method">GET</span>
+                <code>/docs</code>
+                <p>Interactive API documentation (Swagger UI)</p>
+                <div class="example">
+                    <strong>Example:</strong> <a href="/docs" target="_blank">http://localhost:8001/docs</a>
+                </div>
+            </div>
+            
+            <hr style="border-color: rgba(255, 255, 255, 0.3); margin: 30px 0;">
+            
+            <p style="text-align: center; opacity: 0.8;">
+                <strong>Version:</strong> 1.0.0 | <strong>Methodology:</strong> TransUnion CIBIL India 2025
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "CIBIL Analysis"}
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "service": "CIBIL Analysis",
+        "version": "1.0.0",
+        "data_processor_url": DATA_PROCESSOR_BASE_URL
+    }
 
 @app.get("/analyze-cibil/{session_id}")
 async def analyze_cibil_score(session_id: str):
@@ -409,15 +517,24 @@ async def analyze_cibil_score(session_id: str):
         response = requests.get(url, timeout=30)
         
         if response.status_code == 404:
-            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Session '{session_id}' not found. Please ensure data processor has this session."
+            )
         elif response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail="Failed to fetch data")
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Failed to fetch data from processor: {response.text}"
+            )
         
         data = response.json()
         transactions = data.get('relevant_transactions', [])
         
         if not transactions:
-            raise HTTPException(status_code=400, detail="No transactions found in CSV")
+            raise HTTPException(
+                status_code=400,
+                detail="No transactions found in CSV for this session"
+            )
         
         result = calculate_cibil_score(transactions)
         
@@ -429,13 +546,20 @@ async def analyze_cibil_score(session_id: str):
         return result
         
     except requests.exceptions.ConnectionError:
-        raise HTTPException(status_code=503, detail="Cannot connect to data service")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Cannot connect to data processor at {DATA_PROCESSOR_BASE_URL}"
+        )
     except requests.exceptions.Timeout:
-        raise HTTPException(status_code=504, detail="Request timeout")
+        raise HTTPException(status_code=504, detail="Request timeout - data processor not responding")
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 if __name__ == "__main__":
+    print(f"Starting CIBIL Analysis Service on port {PORT}")
+    print(f"Data Processor URL: {DATA_PROCESSOR_BASE_URL}")
     uvicorn.run(app, host="0.0.0.0", port=PORT)
