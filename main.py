@@ -14,7 +14,7 @@ import os
 from collections import defaultdict
 
 # Railway Configuration
-DATA_PROCESSOR_BASE_URL = os.getenv("https://taxwisecidib-production.up.railway.app/", "http://localhost:8000")
+DATA_PROCESSOR_BASE_URL = os.getenv("https://web-production-e9773.up.railway.app/", "http://localhost:8000")
 PORT = int(os.getenv("PORT", 8001))
 
 app = FastAPI(
@@ -574,5 +574,6 @@ if __name__ == "__main__":
     print(f"Starting CIBIL Analysis Service on port {PORT}")
     print(f"Data Processor URL: {DATA_PROCESSOR_BASE_URL}")
     uvicorn.run(app, host="0.0.0.0", port=PORT)
+
 
 
